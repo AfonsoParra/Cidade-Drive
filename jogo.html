@@ -1,0 +1,1659 @@
+```html
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cidade Drive</title>
+<style>
+html,body{margin:0;overflow:hidden;background:#222;font-family:Arial}
+canvas{display:block}
+#info{
+position:fixed;top:10px;left:10px;z-index:10;
+background:#111d;color:white;padding:12px 15px;
+border-radius:12px;line-height:1.5
+}
+#garage{
+display:none;position:fixed;inset:0;z-index:20;
+background:#000b;align-items:center;justify-content:center
+}
+#garageBox{
+background:#eee;color:#111;padding:20px;border-radius:20px;
+width:min(700px,90vw);max-height:85vh;overflow:auto
+}
+.cars{
+display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
+gap:12px
+}
+.carOption{
+background:white;border:3px solid #ccc;border-radius:15px;
+padding:12px;cursor:pointer
+}
+.carOption:hover{border-color:#1683ff}
+.carPreview{width:80px;height:42px;border-radius:12px}
+button{padding:10px;border:0;border-radius:10px;font-weight:bold}
+#message{
+display:none;position:fixed;bottom:20px;left:50%;
+transform:translateX(-50%);background:#111;color:white;
+padding:12px 20px;border-radius:12px;z-index:30
+}
+
+/* CARTÃO DE DERROTA */
+#gameOver{
+display:none;
+position:fixed;
+inset:0;
+z-index:40;
+background:#000b;
+align-items:center;
+justify-content:center
+}
+
+#gameOverBox{
+background:white;
+color:#111;
+padding:35px;
+border-radius:20px;
+text-align:center;
+width:min(400px,80vw)
+}
+
+#gameOverBox h1{
+margin-top:0;
+font-size:42px
+}
+
+#gameOverBox button{
+background:#1683ff;
+color:white;
+font-size:18px;
+padding:14px 25px;
+cursor:pointer
+}
+
+/* OBJETIVO DAS 100 MOEDAS */
+#objective{
+display:none;
+position:fixed;
+top:10px;
+right:10px;
+z-index:10;
+background:#111d;
+color:white;
+padding:12px 15px;
+border-radius:12px;
+font-weight:bold
+}
+
+/* BOTÃO VOLTAR AO INÍCIO */
+#backHome{
+display:none;
+position:fixed;
+bottom:20px;
+right:20px;
+z-index:35;
+background:#1683ff;
+color:white;
+font-size:16px;
+padding:12px 18px;
+cursor:pointer
+}
+</style>
+</head>
+
+<body>
+
+<canvas id="game"></canvas>
+
+<div id="info">
+<b>🏙️ CIDADE DRIVE</b><br>
+💰 Moedas: <span id="coins">0</span><br>
+⛽ Combustível: <span id="fuel">100</span>%<br>
+🚗 Velocidade máxima: <span id="speed">20</span> km/h<br><br>
+<b>WASD</b> — conduzir<br>
+<b>G</b> — garagem<br>
+<b>E</b> — abastecer
+</div>
+
+<div id="objective">
+🎯 OBJETIVO: 100 MOEDAS<br>
+💰 <span id="objectiveCoins">0</span> / 100
+</div>
+
+<button id="backHome" onclick="resetGame()">
+Voltar ao início
+</button>
+
+<div id="garage">
+<div id="garageBox">
+<h1>🚗 Garagem</h1>
+<p>Escolhe o teu carro:</p>
+<div class="cars" id="carList"></div>
+<button onclick="fecharGaragem()">Fechar</button>
+</div>
+</div>
+
+<div id="message"></div>
+
+<div id="gameOver">
+ <div id="gameOverBox">
+  <h1>💥 Perdeste!</h1>
+  <p>Ficaste sem combustível e já não tens nenhum carro disponível.</p>
+  <button onclick="resetGame()">Voltar ao início</button>
+ </div>
+</div>
+
+<script>
+
+const canvas=document.getElementById("game");
+const ctx=canvas.getContext("2d");
+
+function resize(){
+ canvas.width=innerWidth;
+ canvas.height=innerHeight;
+}
+resize();
+addEventListener("resize",resize);
+
+
+/* =========================
+   MAPA — MAIOR
+========================= */
+
+const ROAD=280;
+const SIDEWALK=55;
+const LANE=70;
+
+const roadXs=[];
+const roadYs=[];
+
+for(let i=-7;i<=7;i++){
+ roadXs.push(i*900);
+ roadYs.push(i*900);
+}
+
+const MIN=-7000;
+const MAX=7000;
+
+
+/* =========================
+   CARROS
+========================= */
+
+const carros=[
+ {nome:"Carro inicial",velocidade:20,preco:0,cor:"#e53935"},
+ {nome:"Carro azul",velocidade:40,preco:50,cor:"#1976d2"},
+ {nome:"Carro verde",velocidade:60,preco:80,cor:"#2e7d32"},
+ {nome:"Carro amarelo",velocidade:80,preco:110,cor:"#fbc02d"},
+ {nome:"Carro roxo",velocidade:100,preco:150,cor:"#8e24aa"}
+];
+
+let carroAtual=0;
+let carrosComprados=[true,false,false,false,false];
+let carrosBloqueados=[false,false,false,false,false];
+
+let coins=0;
+let fuel=100;
+
+let temQuinto=false;
+let moedasDepoisQuinto=0;
+
+
+/* =========================
+   JOGADOR
+========================= */
+
+const player={
+ x:-500,
+ y:LANE,
+ angle:0,
+ speed:0
+};
+
+let cameraX=player.x;
+let cameraY=player.y;
+
+
+/* =========================
+   TECLAS
+========================= */
+
+const keys={};
+
+addEventListener("keydown",e=>{
+ keys[e.key.toLowerCase()]=true;
+
+ if(e.key.toLowerCase()=="g")abrirGaragem();
+ if(e.key.toLowerCase()=="e")abastecer();
+});
+
+addEventListener("keyup",e=>{
+ keys[e.key.toLowerCase()]=false;
+});
+
+
+/* =========================
+   UTILIDADES
+========================= */
+
+function dist(a,b,c,d){
+ return Math.hypot(a-c,b-d);
+}
+
+function msg(t){
+ const m=document.getElementById("message");
+ m.textContent=t;
+ m.style.display="block";
+ clearTimeout(m.timer);
+ m.timer=setTimeout(()=>m.style.display="none",2200);
+}
+
+function road(x,y){
+
+ for(const r of roadXs)
+  if(Math.abs(x-r)<=ROAD/2)return true;
+
+ for(const r of roadYs)
+  if(Math.abs(y-r)<=ROAD/2)return true;
+
+ return false;
+}
+
+
+/* =========================
+   MOEDAS — 2000
+========================= */
+
+let moedas=[];
+
+function criarMoedas(){
+
+ moedas=[];
+
+ for(let i=0;i<2000;i++){
+
+  const horizontal=Math.random()<.5;
+
+  if(horizontal){
+
+   const y=roadYs[
+    Math.floor(Math.random()*roadYs.length)
+   ];
+
+   moedas.push({
+    x:MIN+Math.random()*(MAX-MIN),
+    y:y+(Math.random()<.5?-LANE:LANE),
+    valor:Math.random()<.9?1:5
+   });
+
+  }else{
+
+   const x=roadXs[
+    Math.floor(Math.random()*roadXs.length)
+   ];
+
+   moedas.push({
+    x:x+(Math.random()<.5?-LANE:LANE),
+    y:MIN+Math.random()*(MAX-MIN),
+    valor:Math.random()<.9?1:5
+   });
+  }
+ }
+}
+
+criarMoedas();
+
+
+/* =========================
+   EDIFÍCIOS
+========================= */
+
+let edificios=[];
+
+function criarEdificios(){
+
+ edificios=[];
+
+ for(const rx of roadXs){
+  for(const ry of roadYs){
+
+   const zonas=[
+    [-520,-520],
+    [250,-520],
+    [-520,250],
+    [250,250]
+   ];
+
+   for(const z of zonas){
+
+    const w=150+Math.random()*120;
+    const h=150+Math.random()*100;
+
+    edificios.push({
+     x:rx+z[0],
+     y:ry+z[1],
+     w,h,
+     cor:[
+      "#c7c7c7",
+      "#e0b48a",
+      "#a9c7dc",
+      "#d7a9c7",
+      "#b8d4a5"
+     ][Math.floor(Math.random()*5)],
+     loja:Math.random()<.5
+    });
+   }
+  }
+ }
+}
+
+criarEdificios();
+
+
+/* =========================
+   POSTOS
+========================= */
+
+let postos=[];
+
+const cruzamentos=[];
+
+for(const x of roadXs){
+ for(const y of roadYs){
+  cruzamentos.push({x,y});
+ }
+}
+
+for(let i=0;i<30;i++){
+
+ const indice=(i*2)%cruzamentos.length;
+ const c=cruzamentos[indice];
+
+ const lado=i%4;
+
+ if(lado===0){
+
+  postos.push({
+   x:c.x-200,
+   y:c.y-200
+  });
+
+ }else if(lado===1){
+
+  postos.push({
+   x:c.x+200,
+   y:c.y-200
+  });
+
+ }else if(lado===2){
+
+  postos.push({
+   x:c.x-200,
+   y:c.y+200
+  });
+
+ }else{
+
+  postos.push({
+   x:c.x+200,
+   y:c.y+200
+  });
+ }
+}
+
+
+/* =========================
+   TRÂNSITO
+========================= */
+
+let traffic=[];
+
+function criarTraffic(){
+
+ traffic=[];
+
+ const cores=[
+  "#eee","#222","#2196f3","#ff9800",
+  "#9c27b0","#43a047","#f44336"
+ ];
+
+ for(let i=0;i<130;i++){
+
+  const horizontal=Math.random()<.5;
+  const dir=Math.random()<.5?1:-1;
+
+  if(horizontal){
+
+   const y=roadYs[
+    Math.floor(Math.random()*roadYs.length)
+   ];
+
+   traffic.push({
+    axis:"h",
+    x:MIN+Math.random()*(MAX-MIN),
+    y:y+(dir==1?LANE:-LANE),
+    dir,
+    speed:1.2+Math.random()*1,
+    cor:cores[Math.floor(Math.random()*cores.length)],
+    stopped:false
+   });
+
+  }else{
+
+   const x=roadXs[
+    Math.floor(Math.random()*roadXs.length)
+   ];
+
+   traffic.push({
+    axis:"v",
+    x:x+(dir==1?-LANE:LANE),
+    y:MIN+Math.random()*(MAX-MIN),
+    dir,
+    speed:1.2+Math.random()*1,
+    cor:cores[Math.floor(Math.random()*cores.length)],
+    stopped:false
+   });
+  }
+ }
+}
+
+criarTraffic();
+
+
+/* =========================
+   PEÕES
+========================= */
+
+let pedestrians=[];
+
+function criarPedestres(){
+
+ pedestrians=[];
+
+ for(let i=0;i<100;i++){
+
+  const ix=roadXs[
+   Math.floor(Math.random()*roadXs.length)
+  ];
+
+  const iy=roadYs[
+   Math.floor(Math.random()*roadYs.length)
+  ];
+
+  const side=Math.floor(Math.random()*4);
+
+  let p;
+
+  if(side===0){
+
+   p={
+    x:ix-100+Math.random()*200,
+    y:iy-174,
+    ix,iy,side,
+    state:"walk",
+    dir:Math.random()<.5?1:-1,
+    wait:80+Math.random()*250,
+    speed:.7
+   };
+
+  }else if(side===1){
+
+   p={
+    x:ix-100+Math.random()*200,
+    y:iy+174,
+    ix,iy,side,
+    state:"walk",
+    dir:Math.random()<.5?1:-1,
+    wait:80+Math.random()*250,
+    speed:.7
+   };
+
+  }else if(side===2){
+
+   p={
+    x:ix-174,
+    y:iy-100+Math.random()*200,
+    ix,iy,side,
+    state:"walk",
+    dir:Math.random()<.5?1:-1,
+    wait:80+Math.random()*250,
+    speed:.7
+   };
+
+  }else{
+
+   p={
+    x:ix+174,
+    y:iy-100+Math.random()*200,
+    ix,iy,side,
+    state:"walk",
+    dir:Math.random()<.5?1:-1,
+    wait:80+Math.random()*250,
+    speed:.7
+   };
+  }
+
+  pedestrians.push(p);
+ }
+}
+
+criarPedestres();
+
+
+/* =========================
+   SEMÁFOROS
+========================= */
+
+function lights(x,y){
+
+ const t=(performance.now()+
+ x*7+y*3)%9000;
+
+ return{
+  h:t<4500,
+  v:t>=4500
+ };
+}
+
+
+/* =========================
+   PEÕES
+========================= */
+
+function updatePedestrians(){
+
+ for(const p of pedestrians){
+
+  if(p.state==="walk"){
+
+   p.wait--;
+
+   if(p.side===0||p.side===1){
+
+    const crossX=p.ix+(p.dir>0?174:-174);
+
+    p.x+=p.dir*p.speed;
+
+    if(
+     Math.abs(p.x-crossX)<4 &&
+     p.wait<=0
+    ){
+
+     p.x=crossX;
+     p.state="cross";
+     p.wait=60;
+    }
+
+    if(p.x>p.ix+250){
+     p.x=p.ix+250;
+     p.dir=-1;
+    }
+
+    if(p.x<p.ix-250){
+     p.x=p.ix-250;
+     p.dir=1;
+    }
+
+   }else{
+
+    const crossY=p.iy+(p.dir>0?174:-174);
+
+    p.y+=p.dir*p.speed;
+
+    if(
+     Math.abs(p.y-crossY)<4 &&
+     p.wait<=0
+    ){
+
+     p.y=crossY;
+     p.state="cross";
+     p.wait=60;
+    }
+
+    if(p.y>p.iy+250){
+     p.y=p.iy+250;
+     p.dir=-1;
+    }
+
+    if(p.y<p.iy-250){
+     p.y=p.iy-250;
+     p.dir=1;
+    }
+   }
+
+   continue;
+  }
+
+
+  if(p.state==="cross" && p.wait>0){
+
+   p.wait--;
+   continue;
+  }
+
+
+  if(p.state==="cross"){
+
+   let tx,ty;
+
+   if(p.side===0){
+
+    tx=p.x;
+    ty=p.iy+174;
+
+   }else if(p.side===1){
+
+    tx=p.x;
+    ty=p.iy-174;
+
+   }else if(p.side===2){
+
+    tx=p.ix+174;
+    ty=p.y;
+
+   }else{
+
+    tx=p.ix-174;
+    ty=p.y;
+   }
+
+   const dx=tx-p.x;
+   const dy=ty-p.y;
+   const d=Math.hypot(dx,dy);
+
+   if(d<3){
+
+    p.x=tx;
+    p.y=ty;
+
+    if(p.side===0)p.side=1;
+    else if(p.side===1)p.side=0;
+    else if(p.side===2)p.side=3;
+    else p.side=2;
+
+    p.dir=Math.random()<.5?1:-1;
+    p.wait=150+Math.random()*300;
+    p.state="walk";
+
+   }else{
+
+    p.x+=dx/d*p.speed;
+    p.y+=dy/d*p.speed;
+   }
+  }
+ }
+}
+
+
+/* =========================
+   DETETAR PEÃO
+========================= */
+
+function pedestrianAhead(car){
+
+ for(const p of pedestrians){
+
+  if(p.state!=="cross")continue;
+
+  if(car.axis=="h"){
+
+   if(Math.abs(car.y-p.y)<35){
+
+    if(car.dir==1 &&
+       p.x>car.x &&
+       p.x-car.x<150)return true;
+
+    if(car.dir==-1 &&
+       p.x<car.x &&
+       car.x-p.x<150)return true;
+   }
+
+  }else{
+
+   if(Math.abs(car.x-p.x)<35){
+
+    if(car.dir==1 &&
+       p.y>car.y &&
+       p.y-car.y<150)return true;
+
+    if(car.dir==-1 &&
+       p.y<car.y &&
+       car.y-p.y<150)return true;
+   }
+  }
+ }
+
+ return false;
+}
+
+
+/* =========================
+   SEMÁFORO
+========================= */
+
+function redAhead(car){
+
+ for(const x of roadXs){
+  for(const y of roadYs){
+
+   const l=lights(x,y);
+
+   if(car.axis=="h"&&!l.h){
+
+    if(Math.abs(car.y-y)<ROAD/2){
+
+     if(car.dir==1&&x>car.x&&x-car.x<150)
+      return true;
+
+     if(car.dir==-1&&x<car.x&&car.x-x<150)
+      return true;
+    }
+   }
+
+   if(car.axis=="v"&&!l.v){
+
+    if(Math.abs(car.x-x)<ROAD/2){
+
+     if(car.dir==1&&y>car.y&&y-car.y<150)
+      return true;
+
+     if(car.dir==-1&&y<car.y&&car.y-y<150)
+      return true;
+    }
+   }
+  }
+ }
+
+ return false;
+}
+
+
+/* =========================
+   FILAS DE CARROS
+========================= */
+
+function carAhead(car){
+
+ for(const other of traffic){
+
+  if(other===car)continue;
+
+  if(other.axis!==car.axis)continue;
+
+  if(other.dir!==car.dir)continue;
+
+  if(car.axis=="h"){
+
+   const d=(other.x-car.x)*car.dir;
+
+   if(d>0&&d<70&&
+      Math.abs(other.y-car.y)<10)
+    return true;
+
+  }else{
+
+   const d=(other.y-car.y)*car.dir;
+
+   if(d>0&&d<70&&
+      Math.abs(other.x-car.x)<10)
+    return true;
+  }
+ }
+
+ return false;
+}
+
+
+/* =========================
+   UPDATE TRÂNSITO
+========================= */
+
+function updateTraffic(){
+
+ for(const car of traffic){
+
+  const pessoa=pedestrianAhead(car);
+  const semaforo=redAhead(car);
+  const frente=carAhead(car);
+
+  car.stopped=pessoa||semaforo||frente;
+
+  if(!car.stopped){
+
+   if(car.axis=="h")
+    car.x+=car.speed*car.dir;
+   else
+    car.y+=car.speed*car.dir;
+  }
+
+  if(car.x>MAX+200)car.x=MIN-200;
+  if(car.x<MIN-200)car.x=MAX+200;
+  if(car.y>MAX+200)car.y=MIN-200;
+  if(car.y<MIN-200)car.y=MAX+200;
+ }
+}
+
+
+/* =========================
+   JOGADOR
+========================= */
+
+function updatePlayer(){
+
+ if(carrosBloqueados[carroAtual]){
+  player.speed=0;
+  return;
+ }
+
+ const max=carros[carroAtual].velocidade/8;
+
+ if(keys.w){
+  player.speed+=.045;
+  if(player.speed>max)player.speed=max;
+ }
+
+ if(keys.s){
+  player.speed-=.09;
+  if(player.speed<-max/2)
+   player.speed=-max/2;
+ }
+
+ if(!keys.w&&!keys.s){
+
+  if(player.speed>0)player.speed-=.03;
+  if(player.speed<0)player.speed+=.03;
+
+  if(Math.abs(player.speed)<.03)
+   player.speed=0;
+ }
+
+ if(keys.a)
+  player.angle-=.045*Math.min(1,Math.abs(player.speed));
+
+ if(keys.d)
+  player.angle+=.045*Math.min(1,Math.abs(player.speed));
+
+ const ox=player.x;
+ const oy=player.y;
+
+ player.x+=Math.cos(player.angle)*player.speed;
+ player.y+=Math.sin(player.angle)*player.speed;
+
+ if(!road(player.x,player.y)){
+
+  player.x=ox;
+  player.y=oy;
+  player.speed=0;
+ }
+
+ fuel-=Math.abs(player.speed)*.008;
+
+ if(fuel<=0){
+
+  fuel=0;
+  player.speed=0;
+  carrosBloqueados[carroAtual]=true;
+
+  /* Verificar se ainda existe algum carro utilizável */
+
+  let temOutroCarro=false;
+
+  for(let i=0;i<carros.length;i++){
+
+   if(
+    i!==carroAtual &&
+    carrosComprados[i] &&
+    !carrosBloqueados[i]
+   ){
+    temOutroCarro=true;
+    break;
+   }
+  }
+
+  if(temOutroCarro){
+
+   msg("⛽ Ficaste sem combustível!");
+   abrirGaragem();
+
+  }else{
+
+   document.getElementById("gameOver")
+   .style.display="flex";
+  }
+ }
+}
+
+
+/* =========================
+   MOEDAS
+========================= */
+
+function updateCoins(){
+
+ for(let i=moedas.length-1;i>=0;i--){
+
+  const m=moedas[i];
+
+  if(dist(
+   player.x,player.y,m.x,m.y
+  )<30){
+
+   coins+=m.valor;
+
+   if(temQuinto)
+    moedasDepoisQuinto+=m.valor;
+
+   moedas.splice(i,1);
+
+   /* Atualizar objetivo das 100 moedas */
+
+   if(temQuinto){
+
+    document.getElementById("objectiveCoins")
+    .textContent=Math.min(moedasDepoisQuinto,100);
+
+    if(moedasDepoisQuinto>=100){
+
+     document.getElementById("backHome")
+     .style.display="block";
+    }
+   }
+  }
+ }
+}
+
+
+/* =========================
+   ABASTECER
+========================= */
+
+function abastecer(){
+
+ for(const p of postos){
+
+  if(dist(player.x,player.y,p.x,p.y)<120){
+
+   if(fuel>=100){
+    msg("⛽ O depósito já está cheio!");
+    return;
+   }
+
+   if(coins<10){
+    msg("💰 Precisas de 10 moedas!");
+    return;
+   }
+
+   coins-=10;
+   fuel=100;
+
+   msg("⛽ Abastecido!");
+   return;
+  }
+ }
+
+ msg("⛽ Encosta a um posto e carrega E.");
+}
+
+
+/* =========================
+   GARAGEM
+========================= */
+
+function abrirGaragem(){
+
+ document.getElementById("garage")
+ .style.display="flex";
+
+ atualizarGarage();
+}
+
+function fecharGaragem(){
+
+ document.getElementById("garage")
+ .style.display="none";
+}
+
+function atualizarGarage(){
+
+ const list=document.getElementById("carList");
+
+ list.innerHTML="";
+
+ carros.forEach((c,i)=>{
+
+  const d=document.createElement("div");
+  d.className="carOption";
+
+  let estado;
+
+  if(!carrosComprados[i])
+   estado=`💰 ${c.preco} moedas`;
+  else if(carrosBloqueados[i])
+   estado=`🔒 Reativar por 30 moedas`;
+  else
+   estado="✅ Disponível";
+
+  d.innerHTML=`
+   <div class="carPreview"
+        style="background:${c.cor}"></div>
+   <b>${c.nome}</b>
+   <p>${c.velocidade} km/h</p>
+   <p>${estado}</p>
+  `;
+
+  d.onclick=()=>selectCar(i);
+
+  list.appendChild(d);
+ });
+}
+
+function selectCar(i){
+
+ const c=carros[i];
+
+ if(!carrosComprados[i]){
+
+  if(coins<c.preco){
+   msg("💰 Não tens moedas suficientes!");
+   return;
+  }
+
+  coins-=c.preco;
+  carrosComprados[i]=true;
+ }
+
+ if(carrosBloqueados[i]){
+
+  if(coins<30){
+   msg("💰 Precisas de 30 moedas!");
+   return;
+  }
+
+  coins-=30;
+  carrosBloqueados[i]=false;
+ }
+
+ carroAtual=i;
+ fuel=100;
+
+ if(i==4&&!temQuinto){
+
+  temQuinto=true;
+  moedasDepoisQuinto=0;
+
+  document.getElementById("objective")
+  .style.display="block";
+
+  document.getElementById("objectiveCoins")
+  .textContent="0";
+
+  document.getElementById("backHome")
+  .style.display="none";
+
+  msg("🏆 Agora apanha 100 moedas!");
+ }
+
+ atualizarGarage();
+}
+
+
+/* =========================
+   RESET
+========================= */
+
+function resetGame(){
+
+ coins=0;
+ fuel=100;
+
+ carroAtual=0;
+
+ carrosComprados=[
+  true,false,false,false,false
+ ];
+
+ carrosBloqueados=[
+  false,false,false,false,false
+ ];
+
+ temQuinto=false;
+ moedasDepoisQuinto=0;
+
+ player.x=-500;
+ player.y=LANE;
+ player.angle=0;
+ player.speed=0;
+
+ criarMoedas();
+
+ fecharGaragem();
+
+ document.getElementById("gameOver")
+ .style.display="none";
+
+ document.getElementById("objective")
+ .style.display="none";
+
+ document.getElementById("backHome")
+ .style.display="none";
+
+ msg("🎉 Voltaste ao início!");
+}
+
+
+/* =========================
+   CÂMARA
+========================= */
+
+function world(x,y){
+
+ return{
+  x:x-cameraX+canvas.width/2,
+  y:y-cameraY+canvas.height/2
+ };
+}
+
+function updateCamera(){
+
+ cameraX+=(player.x-cameraX)*.1;
+ cameraY+=(player.y-cameraY)*.1;
+}
+
+
+/* =========================
+   DESENHAR ESTRADAS
+========================= */
+
+function drawRoads(){
+
+ ctx.fillStyle="#6fbd68";
+ ctx.fillRect(0,0,canvas.width,canvas.height);
+
+ ctx.fillStyle="#aaa";
+
+ for(const x of roadXs){
+
+  let p=world(
+   x-ROAD/2-SIDEWALK,
+   MIN
+  );
+
+  ctx.fillRect(
+   p.x,p.y,SIDEWALK,MAX-MIN
+  );
+
+  p=world(x+ROAD/2,MIN);
+
+  ctx.fillRect(
+   p.x,p.y,SIDEWALK,MAX-MIN
+  );
+ }
+
+ for(const y of roadYs){
+
+  let p=world(
+   MIN,y-ROAD/2-SIDEWALK
+  );
+
+  ctx.fillRect(
+   p.x,p.y,MAX-MIN,SIDEWALK
+  );
+
+  p=world(MIN,y+ROAD/2);
+
+  ctx.fillRect(
+   p.x,p.y,MAX-MIN,SIDEWALK
+  );
+ }
+
+ ctx.fillStyle="#414141";
+
+ for(const y of roadYs){
+
+  const p=world(MIN,y-ROAD/2);
+
+  ctx.fillRect(
+   p.x,p.y,MAX-MIN,ROAD
+  );
+ }
+
+ for(const x of roadXs){
+
+  const p=world(x-ROAD/2,MIN);
+
+  ctx.fillRect(
+   p.x,p.y,ROAD,MAX-MIN
+  );
+ }
+
+ ctx.strokeStyle="#f4d83d";
+ ctx.lineWidth=5;
+ ctx.setLineDash([35,25]);
+
+ for(const y of roadYs){
+
+  const a=world(MIN,y);
+  const b=world(MAX,y);
+
+  ctx.beginPath();
+  ctx.moveTo(a.x,a.y);
+  ctx.lineTo(b.x,b.y);
+  ctx.stroke();
+ }
+
+ for(const x of roadXs){
+
+  const a=world(x,MIN);
+  const b=world(x,MAX);
+
+  ctx.beginPath();
+  ctx.moveTo(a.x,a.y);
+  ctx.lineTo(b.x,b.y);
+  ctx.stroke();
+ }
+
+ ctx.setLineDash([]);
+}
+
+
+/* =========================
+   PASSADEIRAS
+========================= */
+
+function drawCrosswalks(){
+
+ for(const x of roadXs){
+  for(const y of roadYs){
+
+   crossH(x,y-174);
+   crossH(x,y+174);
+
+   crossV(x-174,y);
+   crossV(x+174,y);
+  }
+ }
+}
+
+function crossH(x,y){
+
+ const p=world(x-140,y-14);
+
+ ctx.fillStyle="white";
+
+ for(let i=0;i<9;i++)
+  ctx.fillRect(
+   p.x+i*31,p.y,17,28
+  );
+}
+
+function crossV(x,y){
+
+ const p=world(x-14,y-140);
+
+ ctx.fillStyle="white";
+
+ for(let i=0;i<9;i++)
+  ctx.fillRect(
+   p.x,p.y+i*31,28,17
+  );
+}
+
+
+/* =========================
+   SEMÁFOROS
+========================= */
+
+function drawLights(){
+
+ for(const x of roadXs){
+  for(const y of roadYs){
+
+   const l=lights(x,y);
+
+   light(
+    x-180,y-180,l.h
+   );
+
+   light(
+    x+155,y-180,l.v
+   );
+  }
+ }
+}
+
+function light(x,y,green){
+
+ const p=world(x,y);
+
+ ctx.fillStyle="#222";
+
+ ctx.fillRect(
+  p.x,p.y,25,65
+ );
+
+ ctx.fillStyle=
+  green?"#20e05a":"#e53935";
+
+ ctx.beginPath();
+
+ ctx.arc(
+  p.x+12,p.y+32,9,0,Math.PI*2
+ );
+
+ ctx.fill();
+}
+
+
+/* =========================
+   EDIFÍCIOS
+========================= */
+
+function drawBuildings(){
+
+ for(const b of edificios){
+
+  const p=world(b.x,b.y);
+
+  ctx.fillStyle=b.cor;
+
+  ctx.fillRect(
+   p.x,p.y,b.w,b.h
+  );
+
+  ctx.strokeStyle="#555";
+  ctx.lineWidth=3;
+  ctx.strokeRect(
+   p.x,p.y,b.w,b.h
+  );
+
+  ctx.fillStyle="#8ed4e8";
+
+  for(let x=20;x<b.w-20;x+=45)
+   for(let y=20;y<b.h-20;y+=45)
+    ctx.fillRect(
+     p.x+x,p.y+y,20,22
+    );
+
+  if(b.loja){
+
+   ctx.fillStyle="white";
+
+   ctx.fillRect(
+    p.x+15,
+    p.y+b.h-45,
+    b.w-30,
+    28
+   );
+
+   ctx.fillStyle="#111";
+   ctx.font="bold 13px Arial";
+
+   ctx.fillText(
+    "LOJA",
+    p.x+b.w/2-18,
+    p.y+b.h-25
+   );
+  }
+ }
+}
+
+
+/* =========================
+   POSTOS
+========================= */
+
+function drawGas(){
+
+ for(const p0 of postos){
+
+  const p=world(p0.x,p0.y);
+
+  ctx.fillStyle="white";
+
+  ctx.fillRect(
+   p.x-55,p.y-40,110,80
+  );
+
+  ctx.fillStyle="#e53935";
+
+  ctx.fillRect(
+   p.x-50,p.y-40,100,15
+  );
+
+  ctx.fillStyle="#111";
+  ctx.font="bold 14px Arial";
+
+  ctx.fillText(
+   "⛽ GAS",
+   p.x-25,p.y+5
+  );
+ }
+}
+
+
+/* =========================
+   MOEDAS
+========================= */
+
+function drawCoins(){
+
+ for(const m of moedas){
+
+  const p=world(m.x,m.y);
+
+  ctx.fillStyle=
+   m.valor==5?"#ff9800":"#ffd700";
+
+  ctx.beginPath();
+
+  ctx.arc(
+   p.x,p.y,
+   m.valor==5?12:8,
+   0,Math.PI*2
+  );
+
+  ctx.fill();
+
+  ctx.fillStyle="#654d00";
+  ctx.font="bold 10px Arial";
+
+  ctx.fillText(
+   m.valor,
+   p.x-3,p.y+4
+  );
+ }
+}
+
+
+/* =========================
+   PEÕES
+========================= */
+
+function drawPeople(){
+
+ for(const p of pedestrians){
+
+  const s=world(p.x,p.y);
+
+  ctx.fillStyle="#222";
+
+  ctx.beginPath();
+
+  ctx.arc(
+   s.x,s.y-9,5,0,Math.PI*2
+  );
+
+  ctx.fill();
+
+  ctx.strokeStyle="#222";
+  ctx.lineWidth=4;
+
+  ctx.beginPath();
+
+  ctx.moveTo(s.x,s.y-4);
+  ctx.lineTo(s.x,s.y+10);
+
+  ctx.stroke();
+
+  ctx.beginPath();
+
+  ctx.moveTo(s.x,s.y+2);
+  ctx.lineTo(s.x-7,s.y+8);
+
+  ctx.moveTo(s.x,s.y+2);
+  ctx.lineTo(s.x+7,s.y+8);
+
+  ctx.stroke();
+ }
+}
+
+
+/* =========================
+   CARROS TRÂNSITO
+========================= */
+
+function drawTraffic(){
+
+ for(const c of traffic){
+
+  const p=world(c.x,c.y);
+
+  ctx.save();
+
+  ctx.translate(p.x,p.y);
+
+  if(c.axis=="h"){
+   if(c.dir==-1)ctx.rotate(Math.PI);
+  }else{
+   ctx.rotate(
+    c.dir==1?Math.PI/2:-Math.PI/2
+   );
+  }
+
+  ctx.fillStyle=c.cor;
+
+  ctx.fillRect(
+   -22,-12,44,24
+  );
+
+  ctx.fillStyle="#9ed9e8";
+
+  ctx.fillRect(
+   0,-9,15,18
+  );
+
+  ctx.fillStyle="#111";
+
+  ctx.fillRect(-17,-15,10,5);
+  ctx.fillRect(7,-15,10,5);
+  ctx.fillRect(-17,10,10,5);
+  ctx.fillRect(7,10,10,5);
+
+  ctx.restore();
+ }
+}
+
+
+/* =========================
+   JOGADOR
+========================= */
+
+function drawPlayer(){
+
+ const p=world(
+  player.x,player.y
+ );
+
+ ctx.save();
+
+ ctx.translate(p.x,p.y);
+ ctx.rotate(player.angle);
+
+ ctx.fillStyle=
+  carros[carroAtual].cor;
+
+ ctx.fillRect(
+  -28,-15,56,30
+ );
+
+ ctx.fillStyle="#9ed9e8";
+
+ ctx.fillRect(
+  0,-11,16,22
+ );
+
+ ctx.fillStyle="#111";
+
+ ctx.fillRect(-20,-18,12,6);
+ ctx.fillRect(8,-18,12,6);
+ ctx.fillRect(-20,12,12,6);
+ ctx.fillRect(8,12,12,6);
+
+ ctx.restore();
+}
+
+
+/* =========================
+   INTERFACE
+========================= */
+
+function updateUI(){
+
+ document.getElementById("coins")
+ .textContent=coins;
+
+ document.getElementById("fuel")
+ .textContent=Math.floor(fuel);
+
+ document.getElementById("speed")
+ .textContent=carros[carroAtual].velocidade;
+
+ if(temQuinto){
+
+  document.getElementById("objectiveCoins")
+  .textContent=Math.min(moedasDepoisQuinto,100);
+ }
+}
+
+
+/* =========================
+   DESENHAR
+========================= */
+
+function draw(){
+
+ drawRoads();
+ drawBuildings();
+ drawCrosswalks();
+ drawGas();
+ drawLights();
+ drawCoins();
+ drawTraffic();
+ drawPeople();
+ drawPlayer();
+}
+
+
+/* =========================
+   LOOP
+========================= */
+
+function loop(){
+
+ updatePlayer();
+ updateTraffic();
+ updatePedestrians();
+ updateCoins();
+ updateCamera();
+ updateUI();
+ draw();
+
+ requestAnimationFrame(loop);
+}
+
+loop();
+
+</script>
+</body>
+</html>
+```
